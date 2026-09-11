@@ -1,0 +1,251 @@
+{
+  "name": "WF4 - Encerramento LGPD e Auditoria GRP",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "caso_id"
+            }
+          ]
+        }
+      },
+      "id": "trigger-execute-workflow",
+      "name": "Gatilho - Recebe Caso Encerrado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Casos"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "caso_id",
+              "lookupValue": "={{$json.caso_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-lookup-encerramento",
+      "name": "Google Sheets - Buscar Caso Encerrado",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [120, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mascaramento definitivo - LGPD (minimização de dados sensíveis pós-encerramento)\nconst caso = $input.item.json;\n\nconst registroAnonimizado = {\n  caso_id: caso.caso_id,\n  categoria: caso.categoria,\n  status: caso.status,\n  data_ocorrencia: caso.data_ocorrencia,\n  data_recebimento: caso.data_recebimento,\n  data_encerramento: new Date().toISOString(),\n  tempo_total_tramitacao_dias: Math.floor(\n    (new Date() - new Date(caso.data_recebimento)) / (1000 * 60 * 60 * 24)\n  ),\n  descricao: \"[REGISTRO ANONIMIZADO APÓS ENCERRAMENTO]\",\n  resumo_tratativa: \"[REMOVIDO - LGPD]\",\n  responsavel_tratativa: \"[REMOVIDO - LGPD]\",\n  mascarado: true\n};\n\nreturn { json: registroAnonimizado };"
+      },
+      "id": "code-mascaramento-definitivo",
+      "name": "Code - Mascaramento Definitivo LGPD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 0]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Casos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": ["caso_id"],
+          "value": {
+            "caso_id": "={{$json.caso_id}}",
+            "descricao": "={{$json.descricao}}",
+            "resumo_tratativa": "={{$json.resumo_tratativa}}",
+            "responsavel_tratativa": "={{$json.responsavel_tratativa}}",
+            "status": "={{$json.status}}",
+            "mascarado": "={{$json.mascarado}}",
+            "data_encerramento": "={{$json.data_encerramento}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-update-mascarado",
+      "name": "Google Sheets - Aplicar Mascaramento",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [560, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta o registro imutável de auditoria\nconst caso = $input.item.json;\n\nconst registroAuditoria = {\n  evento: \"ENCERRAMENTO_CASO\",\n  caso_id: caso.caso_id,\n  categoria: caso.categoria,\n  status_final: caso.status,\n  data_recebimento: caso.data_recebimento,\n  data_encerramento: caso.data_encerramento,\n  tempo_tramitacao_dias: caso.tempo_total_tramitacao_dias,\n  hash_integridade: Buffer.from(\n    `${caso.caso_id}-${caso.status}-${caso.data_encerramento}`\n  ).toString('base64')\n};\n\nreturn { json: registroAuditoria };"
+      },
+      "id": "code-registro-auditoria",
+      "name": "Code - Montar Registro de Auditoria",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 0]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Auditoria_Encerramentos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "evento": "={{$json.evento}}",
+            "caso_id": "={{$json.caso_id}}",
+            "categoria": "={{$json.categoria}}",
+            "status_final": "={{$json.status_final}}",
+            "data_recebimento": "={{$json.data_recebimento}}",
+            "data_encerramento": "={{$json.data_encerramento}}",
+            "tempo_tramitacao_dias": "={{$json.tempo_tramitacao_dias}}",
+            "hash_integridade": "={{$json.hash_integridade}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-append-auditoria",
+      "name": "Google Sheets - Log Imutável de Auditoria",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1000, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "comite-etica"
+        },
+        "text": "=📁 Caso Encerrado — Arquivo Morto\n\nProtocolo: {{$json.caso_id}}\nCategoria: {{$json.categoria}}\nStatus final: {{$json.status_final}}\nTempo de tramitação: {{$json.tempo_tramitacao_dias}} dias\nData de encerramento: {{$json.data_encerramento}}\n\nRegistro anonimizado e arquivado conforme LGPD.\nDados sensíveis removidos permanentemente da base ativa.",
+        "otherOptions": {}
+      },
+      "id": "slack-relatorio-consolidado",
+      "name": "Slack - Relatório Consolidado",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1220, -100],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "COLOQUE_AQUI_O_EMAIL_RH_OU_CHEFIA",
+        "subject": "=Encerramento de Apuração — Protocolo {{$json.caso_id}}",
+        "emailType": "text",
+        "message": "=Prezado(a),\n\nInformamos que a apuração referente ao protocolo {{$json.caso_id}} foi concluída em {{$json.data_encerramento}}, dentro do prazo regulatório estabelecido.\n\nO caso foi tratado com sigilo e conforme os princípios de proteção de dados (LGPD), NR-1 e ISO 45003:2021.\n\nAtenciosamente,\nComitê de Ética e Compliance",
+        "options": {}
+      },
+      "id": "gmail-notificacao-final",
+      "name": "Gmail - Notificação Final",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1220, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gatilho - Recebe Caso Encerrado": {
+      "main": [
+        [
+          { "node": "Google Sheets - Buscar Caso Encerrado", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Buscar Caso Encerrado": {
+      "main": [
+        [
+          { "node": "Code - Mascaramento Definitivo LGPD", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Mascaramento Definitivo LGPD": {
+      "main": [
+        [
+          { "node": "Google Sheets - Aplicar Mascaramento", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Aplicar Mascaramento": {
+      "main": [
+        [
+          { "node": "Code - Montar Registro de Auditoria", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Montar Registro de Auditoria": {
+      "main": [
+        [
+          { "node": "Google Sheets - Log Imutável de Auditoria", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Log Imutável de Auditoria": {
+      "main": [
+        [
+          { "node": "Slack - Relatório Consolidado", "type": "main", "index": 0 },
+          { "node": "Gmail - Notificação Final", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "grp-compliance-wf4"
+  }
+}

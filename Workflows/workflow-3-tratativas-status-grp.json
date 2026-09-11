@@ -1,0 +1,284 @@
+{
+  "name": "WF3 - Tratativas e Atualização de Status GRP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "atualizar-caso",
+        "options": {}
+      },
+      "id": "wh-atualizar-caso",
+      "name": "Webhook Atualização",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-100, 0],
+      "webhookId": "atualizar-caso-grp"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Casos"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "caso_id",
+              "lookupValue": "={{$json.body.caso_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-lookup-caso",
+      "name": "Google Sheets - Buscar Caso",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [120, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-caso-existe",
+              "leftValue": "={{$json.caso_id}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-caso-existe",
+      "name": "IF - Caso Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [340, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Máquina de estados: valida transição solicitada\nconst webhookData = $('Webhook Atualização').item.json.body;\nconst registroAtual = $input.item.json;\n\nconst statusAtual = registroAtual.status;\nconst novoStatus = webhookData.novo_status;\n\nconst transicoesPermitidas = {\n  \"Recebido\": [\"Em Investigação\", \"Descartado\"],\n  \"Em Investigação\": [\"Aguardando Evidências\", \"Encerrado\", \"Improcedente\"],\n  \"Aguardando Evidências\": [\"Em Investigação\", \"Encerrado\", \"Improcedente\"],\n  \"Encerrado\": [],\n  \"Improcedente\": [],\n  \"Descartado\": []\n};\n\nconst permitidas = transicoesPermitidas[statusAtual] || [];\nconst transicaoValida = permitidas.includes(novoStatus);\n\nif (!transicaoValida) {\n  return {\n    json: {\n      erro: true,\n      caso_id: webhookData.caso_id,\n      motivo: `Transição inválida: ${statusAtual} → ${novoStatus}`,\n      status_atual: statusAtual\n    }\n  };\n}\n\nreturn {\n  json: {\n    erro: false,\n    caso_id: webhookData.caso_id,\n    row_number: registroAtual.row_number,\n    status_anterior: statusAtual,\n    status_novo: novoStatus,\n    responsavel: webhookData.responsavel || \"Não informado\",\n    resumo_tratativa: webhookData.resumo_tratativa || \"\",\n    data_movimentacao: new Date().toISOString()\n  }\n};"
+      },
+      "id": "code-validar-transicao",
+      "name": "Code - Validar Transição",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-transicao-valida",
+              "leftValue": "={{$json.erro}}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-transicao-valida",
+      "name": "IF - Transição Válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [780, -100]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Casos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": ["caso_id"],
+          "value": {
+            "caso_id": "={{$json.caso_id}}",
+            "status": "={{$json.status_novo}}",
+            "data_ultima_movimentacao": "={{$json.data_movimentacao}}",
+            "responsavel_tratativa": "={{$json.responsavel}}",
+            "resumo_tratativa": "={{$json.resumo_tratativa}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-update-status",
+      "name": "Google Sheets - Atualizar Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1000, -180],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "comite-etica"
+        },
+        "text": "=✅ Caso atualizado\nProtocolo: {{$json.caso_id}}\nStatus: {{$json.status_anterior}} → {{$json.status_novo}}\nResponsável: {{$json.responsavel}}\nData: {{$json.data_movimentacao}}",
+        "otherOptions": {}
+      },
+      "id": "slack-confirmacao",
+      "name": "Slack - Confirmação",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1220, -180],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "comite-etica"
+        },
+        "text": "=🚫 Transição inválida para {{$json.caso_id}}: {{$json.motivo}}",
+        "otherOptions": {}
+      },
+      "id": "slack-erro-transicao",
+      "name": "Slack - Erro Transição Inválida",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1000, 20],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "comite-etica"
+        },
+        "text": "=🚫 Tentativa de atualizar caso inexistente: {{$('Webhook Atualização').item.json.body.caso_id}}",
+        "otherOptions": {}
+      },
+      "id": "slack-erro-caso-inexistente",
+      "name": "Slack - Erro Caso Inexistente",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [560, 140],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Atualização": {
+      "main": [
+        [
+          { "node": "Google Sheets - Buscar Caso", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Buscar Caso": {
+      "main": [
+        [
+          { "node": "IF - Caso Existe?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF - Caso Existe?": {
+      "main": [
+        [
+          { "node": "Code - Validar Transição", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Slack - Erro Caso Inexistente", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Validar Transição": {
+      "main": [
+        [
+          { "node": "IF - Transição Válida?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF - Transição Válida?": {
+      "main": [
+        [
+          { "node": "Google Sheets - Atualizar Status", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Slack - Erro Transição Inválida", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Atualizar Status": {
+      "main": [
+        [
+          { "node": "Slack - Confirmação", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "grp-compliance-wf3"
+  }
+}

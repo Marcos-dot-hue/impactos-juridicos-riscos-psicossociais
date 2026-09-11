@@ -1,0 +1,237 @@
+{
+  "name": "WF5 - Monitoramento Erros e Gestão de Credenciais GRP",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-100, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai e padroniza os detalhes do erro capturado\nconst execution = $json.execution;\nconst workflowInfo = $json.workflow;\nconst trigger = $json.trigger;\n\nconst nodeComErro = execution?.error?.node?.name || \"Nó não identificado\";\nconst mensagemErro = execution?.error?.message || \"Mensagem de erro não disponível\";\nconst tipoErro = execution?.error?.name || \"Erro genérico\";\n\n// Nós considerados críticos: qualquer falha aqui pode comprometer\n// integridade de dados sensíveis (LGPD) ou perda de registro de caso\nconst nosCriticos = [\n  \"Code - Mascaramento Definitivo LGPD\",\n  \"Google Sheets - Aplicar Mascaramento\",\n  \"Google Sheets - Registrar Caso\",\n  \"Google Sheets - Log Imutável de Auditoria\",\n  \"Google Sheets - Atualizar Status\"\n];\n\nconst critico = nosCriticos.some(n => nodeComErro.includes(n));\n\nreturn {\n  json: {\n    workflow_com_erro: workflowInfo?.name || \"Desconhecido\",\n    workflow_id: workflowInfo?.id || \"\",\n    node_com_erro: nodeComErro,\n    tipo_erro: tipoErro,\n    mensagem_erro: mensagemErro,\n    critico,\n    data_hora_erro: new Date().toISOString(),\n    execution_url: execution?.url || \"\"\n  }\n};"
+      },
+      "id": "code-extrair-erro",
+      "name": "Code - Extrair Detalhes do Erro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, -200]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "COLOQUE_AQUI_O_ID_DA_PLANILHA"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Log_Incidentes"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_com_erro": "={{$json.workflow_com_erro}}",
+            "node_com_erro": "={{$json.node_com_erro}}",
+            "tipo_erro": "={{$json.tipo_erro}}",
+            "mensagem_erro": "={{$json.mensagem_erro}}",
+            "critico": "={{$json.critico}}",
+            "data_hora_erro": "={{$json.data_hora_erro}}",
+            "execution_url": "={{$json.execution_url}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-log-incidente",
+      "name": "Google Sheets - Log de Incidentes",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [340, -200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alertas-sistema"
+        },
+        "text": "=🔴 *Falha de Execução Detectada*\n\nWorkflow: {{$json.workflow_com_erro}}\nNó com falha: {{$json.node_com_erro}}\nTipo de erro: {{$json.tipo_erro}}\nMensagem: {{$json.mensagem_erro}}\nCrítico: {{$json.critico ? \"⚠️ SIM - dado sensível/registro pode estar comprometido\" : \"Não\"}}\nData/Hora: {{$json.data_hora_erro}}\n\nDetalhes da execução: {{$json.execution_url}}",
+        "otherOptions": {}
+      },
+      "id": "slack-alerta-erro",
+      "name": "Slack - Alerta #alertas-sistema",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [560, -260],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-critico",
+              "leftValue": "={{$json.critico}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critico",
+      "name": "IF - Falha Crítica?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [560, -100]
+    },
+    {
+      "parameters": {
+        "sendTo": "COLOQUE_AQUI_O_EMAIL_ENGENHARIA",
+        "subject": "=[URGENTE] Falha crítica em {{$json.workflow_com_erro}}",
+        "emailType": "text",
+        "message": "=Uma falha crítica foi detectada em um fluxo que manipula dados de casos GRP (potencial impacto em integridade de dados sensíveis ou LGPD).\n\nWorkflow: {{$json.workflow_com_erro}}\nNó com falha: {{$json.node_com_erro}}\nTipo de erro: {{$json.tipo_erro}}\nMensagem: {{$json.mensagem_erro}}\nData/Hora: {{$json.data_hora_erro}}\n\nAção recomendada: verificar a execução no n8n imediatamente e confirmar se algum caso ficou sem registro ou sem mascaramento.\n\nDetalhes da execução: {{$json.execution_url}}",
+        "options": {}
+      },
+      "id": "gmail-alerta-critico",
+      "name": "Gmail - Alerta Crítico Engenharia",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [780, -100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-revisao-credenciais",
+      "name": "Schedule - Revisão Mensal de Credenciais",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-100, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta o checklist de revisão periódica de credenciais\n// (n8n não expõe data de expiração de token via API pública de forma\n// padronizada para todos os provedores, então este nó gera um lembrete\n// estruturado para revisão manual/registrada pelo responsável)\n\nconst credenciais = [\n  { nome: \"Google Sheets OAuth2\", projeto: \"n8n-grp-automacoes\", tipo: \"OAuth2\" },\n  { nome: \"Google Drive OAuth2\", projeto: \"n8n-grp-automacoes\", tipo: \"OAuth2\" },\n  { nome: \"Gmail OAuth2\", projeto: \"n8n-grp-automacoes\", tipo: \"OAuth2\" },\n  { nome: \"Slack Bot Token\", projeto: \"GRP Compliance Teste\", tipo: \"Bot Token\" }\n];\n\nconst dataAtual = new Date().toISOString().split(\"T\")[0];\nconst listaFormatada = credenciais\n  .map(c => `• ${c.nome} (${c.tipo}) — projeto/workspace: ${c.projeto}`)\n  .join(\"\\n\");\n\nreturn {\n  json: {\n    data_revisao: dataAtual,\n    total_credenciais: credenciais.length,\n    checklist: listaFormatada\n  }\n};"
+      },
+      "id": "code-checklist-credenciais",
+      "name": "Code - Montar Checklist de Credenciais",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 100]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alertas-sistema"
+        },
+        "text": "=🔐 *Lembrete Mensal — Revisão de Credenciais*\n\nData: {{$json.data_revisao}}\n\nAs seguintes credenciais integradas ao fluxo de Compliance GRP devem ser revisadas/renovadas conforme a política de rotatividade:\n\n{{$json.checklist}}\n\nAção: confirmar validade dos tokens OAuth2 no Google Cloud Console (projeto n8n-grp-automacoes) e do Bot Token no workspace Slack. Renovar/reautenticar diretamente nas credenciais do n8n caso necessário.",
+        "otherOptions": {}
+      },
+      "id": "slack-lembrete-credenciais",
+      "name": "Slack - Lembrete de Revisão de Credenciais",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [340, 100],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "GRP Compliance Teste"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          { "node": "Code - Extrair Detalhes do Erro", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Extrair Detalhes do Erro": {
+      "main": [
+        [
+          { "node": "Google Sheets - Log de Incidentes", "type": "main", "index": 0 },
+          { "node": "IF - Falha Crítica?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Google Sheets - Log de Incidentes": {
+      "main": [
+        [
+          { "node": "Slack - Alerta #alertas-sistema", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF - Falha Crítica?": {
+      "main": [
+        [
+          { "node": "Gmail - Alerta Crítico Engenharia", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    },
+    "Schedule - Revisão Mensal de Credenciais": {
+      "main": [
+        [
+          { "node": "Code - Montar Checklist de Credenciais", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Montar Checklist de Credenciais": {
+      "main": [
+        [
+          { "node": "Slack - Lembrete de Revisão de Credenciais", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "grp-compliance-wf5"
+  }
+}

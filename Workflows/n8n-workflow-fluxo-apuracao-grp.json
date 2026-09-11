@@ -1,0 +1,344 @@
+{
+  "name": "Fluxo de Apuração - Assédio e Riscos Psicossociais (GRP)",
+  "nodes": [
+    {
+      "id": "sticky1",
+      "name": "Nota - Etapa 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-160, -40],
+      "parameters": {
+        "content": "## ETAPA 1 — Recebimento e Triagem\nCanal seguro recebe a denúncia, valida campos obrigatórios e gera ID único do caso.",
+        "height": 220,
+        "width": 300
+      }
+    },
+    {
+      "id": "sticky2",
+      "name": "Nota - Etapa 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [560, -40],
+      "parameters": {
+        "content": "## ETAPA 2 — Investigação e Sigilo (LGPD)\nDados sensíveis são mascarados antes de qualquer notificação. Apenas o investigador designado recebe o caso nesta fase.",
+        "height": 220,
+        "width": 320
+      }
+    },
+    {
+      "id": "sticky3",
+      "name": "Nota - Etapa 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1300, -40],
+      "parameters": {
+        "content": "## ETAPA 3 — Governança e Deliberação\nSeparação de funções: quem investiga não aplica a sanção. Comitê de Ética delibera e a decisão fecha a trilha de auditoria (acervo probatório).",
+        "height": 220,
+        "width": 320
+      }
+    },
+    {
+      "id": "1",
+      "name": "Receber Denúncia (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-160, 260],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "denuncia-grp",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "2",
+      "name": "Gerar ID e Timestamp",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [80, 260],
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "caso_id",
+              "value": "={{ $now.format('yyyyLLdd-HHmmss') }}-{{ Math.floor(Math.random()*9000+1000) }}"
+            },
+            {
+              "name": "status",
+              "value": "Em Triagem"
+            },
+            {
+              "name": "data_recebimento",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "email_investigador",
+              "value": "={{ $json.email_investigador || 'investigador.compliance@suaempresa.com' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3",
+      "name": "Validar Campos Obrigatórios",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [320, 260],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.categoria }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.descricao }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.data_ocorrencia }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "Responder - Dados Inválidos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [560, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"erro\", \"mensagem\": \"Campos obrigatórios ausentes: categoria, descricao e data_ocorrencia são necessários.\" } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "Registrar Caso (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [560, 180],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "mode": "list",
+          "value": "COLE_AQUI_O_ID_DA_SUA_PLANILHA"
+        },
+        "sheetName": {
+          "mode": "list",
+          "value": "Casos"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6",
+      "name": "Criar Pasta de Evidências (Drive)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [800, 180],
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "name": "={{ 'Caso_' + $json.caso_id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "7",
+      "name": "Mascarar Dados Sensíveis (LGPD)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 180],
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nconst masked = { ...item };\nif (masked.nome_denunciante) {\n  masked.nome_denunciante = '***SIGILOSO***';\n}\nif (masked.email_denunciante) {\n  masked.email_denunciante = '***SIGILOSO***';\n}\nreturn { json: masked };"
+      }
+    },
+    {
+      "id": "8",
+      "name": "Notificar Investigador (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1280, 180],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.email_investigador }}",
+        "subject": "={{ 'Novo caso designado - ' + $json.caso_id }}",
+        "message": "={{ 'Um novo caso foi registrado e requer investigação sigilosa.\\nID do Caso: ' + $json.caso_id + '\\nCategoria: ' + $json.categoria + '\\nPrazo (SLA): 5 dias úteis para designação formal.' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "9",
+      "name": "Aguardar Investigação (SLA Demo)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1520, 180],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 10,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "10",
+      "name": "Consultar Status do Caso (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1760, 180],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "lookup",
+        "documentId": {
+          "mode": "list",
+          "value": "COLE_AQUI_O_ID_DA_SUA_PLANILHA"
+        },
+        "sheetName": {
+          "mode": "list",
+          "value": "Casos"
+        },
+        "lookupColumn": "caso_id",
+        "lookupValue": "={{ $json.caso_id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "11",
+      "name": "Status = Concluído?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2000, 180],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "value2": "Concluído",
+              "operation": "equals"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "12",
+      "name": "Responder - Em Triagem",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2240, 380],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"em_andamento\", \"caso_id\": $json.caso_id, \"mensagem\": \"Investigação ainda em curso.\" } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "13",
+      "name": "Notificar Comitê de Ética (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [2240, 60],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "mode": "name",
+          "value": "comite-etica"
+        },
+        "text": "={{ 'Caso ' + $json.caso_id + ' concluído pela investigação. Deliberação do Comitê necessária (Compliance, Jurídico, RH).' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "14",
+      "name": "Registrar Decisão Final (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2480, 60],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "mode": "list",
+          "value": "COLE_AQUI_O_ID_DA_SUA_PLANILHA"
+        },
+        "sheetName": {
+          "mode": "list",
+          "value": "Casos"
+        },
+        "columnToMatchOn": "caso_id",
+        "options": {}
+      }
+    },
+    {
+      "id": "15",
+      "name": "Responder - Caso Encerrado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2720, 60],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"encerrado\", \"caso_id\": $json.caso_id, \"mensagem\": \"Caso encerrado e registrado no acervo probatório.\" } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Receber Denúncia (Webhook)": {
+      "main": [[{ "node": "Gerar ID e Timestamp", "type": "main", "index": 0 }]]
+    },
+    "Gerar ID e Timestamp": {
+      "main": [[{ "node": "Validar Campos Obrigatórios", "type": "main", "index": 0 }]]
+    },
+    "Validar Campos Obrigatórios": {
+      "main": [
+        [{ "node": "Registrar Caso (Sheets)", "type": "main", "index": 0 }],
+        [{ "node": "Responder - Dados Inválidos", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar Caso (Sheets)": {
+      "main": [[{ "node": "Criar Pasta de Evidências (Drive)", "type": "main", "index": 0 }]]
+    },
+    "Criar Pasta de Evidências (Drive)": {
+      "main": [[{ "node": "Mascarar Dados Sensíveis (LGPD)", "type": "main", "index": 0 }]]
+    },
+    "Mascarar Dados Sensíveis (LGPD)": {
+      "main": [[{ "node": "Notificar Investigador (Gmail)", "type": "main", "index": 0 }]]
+    },
+    "Notificar Investigador (Gmail)": {
+      "main": [[{ "node": "Aguardar Investigação (SLA Demo)", "type": "main", "index": 0 }]]
+    },
+    "Aguardar Investigação (SLA Demo)": {
+      "main": [[{ "node": "Consultar Status do Caso (Sheets)", "type": "main", "index": 0 }]]
+    },
+    "Consultar Status do Caso (Sheets)": {
+      "main": [[{ "node": "Status = Concluído?", "type": "main", "index": 0 }]]
+    },
+    "Status = Concluído?": {
+      "main": [
+        [{ "node": "Notificar Comitê de Ética (Slack)", "type": "main", "index": 0 }],
+        [{ "node": "Responder - Em Triagem", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notificar Comitê de Ética (Slack)": {
+      "main": [[{ "node": "Registrar Decisão Final (Sheets)", "type": "main", "index": 0 }]]
+    },
+    "Registrar Decisão Final (Sheets)": {
+      "main": [[{ "node": "Responder - Caso Encerrado", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

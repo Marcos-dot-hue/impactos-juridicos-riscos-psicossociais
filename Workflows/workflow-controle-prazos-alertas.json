@@ -1,0 +1,176 @@
+{
+  "name": "GRP - Controle de Prazos e Alertas (Workflow Paralelo)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "1a111111-1111-1111-1111-111111111111",
+      "name": "Verificação Diária (08:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "notes": "Roda todo dia às 08:00. Ajuste o horário conforme sua rotina de compliance."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_SUA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Acervo Probatório",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "2b222222-2222-2222-2222-222222222222",
+      "name": "Ler Casos (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 300],
+      "notes": "Lê todas as linhas da aba 'Acervo Probatório' (caso_id, categoria, descricao, data_ocorrencia, status)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcula dias em aberto e sinaliza atraso de SLA\nconst SLA_DIAS = 30; // ajuste conforme sua política interna\nconst hoje = new Date();\n\nconst resultados = [];\n\nfor (const item of $input.all()) {\n  const dados = item.json;\n  const status = (dados.status || '').trim();\n\n  // só interessa quem ainda está em aberto\n  if (status !== 'Em Investigação' && status !== 'Recebido') {\n    continue;\n  }\n\n  const dataOcorrencia = new Date(dados.data_ocorrencia);\n  if (isNaN(dataOcorrencia.getTime())) {\n    continue; // ignora linhas com data inválida/vazia\n  }\n\n  const diasEmAberto = Math.floor((hoje - dataOcorrencia) / (1000 * 60 * 60 * 24));\n  const atrasado = diasEmAberto > SLA_DIAS;\n\n  resultados.push({\n    json: {\n      caso_id: dados.caso_id,\n      categoria: dados.categoria,\n      status: status,\n      data_ocorrencia: dados.data_ocorrencia,\n      dias_em_aberto: diasEmAberto,\n      sla_dias: SLA_DIAS,\n      atrasado: atrasado\n    }\n  });\n}\n\nreturn resultados;"
+      },
+      "id": "3c333333-3333-3333-3333-333333333333",
+      "name": "Calcular Dias em Aberto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "Calcula quantos dias o caso está aberto e compara com o SLA (padrão 30 dias)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.atrasado }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4d444444-4444-4444-4444-444444444444",
+      "name": "Está Atrasado?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "Mantém no fluxo apenas os casos que estouraram o SLA."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "comite-etica",
+          "mode": "name"
+        },
+        "text": "=🚨 *Alerta de SLA estourado* \\nProtocolo: *{{$json.caso_id}}* \\nCategoria: {{$json.categoria}} \\nStatus atual: {{$json.status}} \\nDias em aberto: {{$json.dias_em_aberto}} (limite: {{$json.sla_dias}} dias) \\n\\n⚠️ Ação necessária para evitar agravamento de passivo trabalhista (FAP/RAT).",
+        "otherOptions": {}
+      },
+      "id": "5e555555-5555-5555-5555-555555555555",
+      "name": "Alertar Comitê de Ética (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1120, 220],
+      "notes": "Reaproveite a credencial Slack já conectada (workspace GRP Compliance Teste, canal #comite-etica)."
+    },
+    {
+      "parameters": {
+        "sendTo": "compliance@suaempresa.com",
+        "subject": "=[SLA Estourado] Caso {{$json.caso_id}} - {{$json.dias_em_aberto}} dias em aberto",
+        "message": "=O caso {{$json.caso_id}} (categoria: {{$json.categoria}}) está com status \"{{$json.status}}\" há {{$json.dias_em_aberto}} dias, ultrapassando o SLA de {{$json.sla_dias}} dias.\\n\\nAcesse o sistema seguro para dar andamento à investigação.\\n\\nEste é um alerta automático do fluxo de compliance GRP.",
+        "options": {}
+      },
+      "id": "6f666666-6666-6666-6666-666666666666",
+      "name": "Alertar Comitê de Ética (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1120, 380],
+      "notes": "Canal redundante ao Slack, caso alguém do comitê não use Slack ativamente. Pode remover se preferir só um canal."
+    }
+  ],
+  "connections": {
+    "Verificação Diária (08:00)": {
+      "main": [
+        [
+          {
+            "node": "Ler Casos (Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Casos (Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Calcular Dias em Aberto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Dias em Aberto": {
+      "main": [
+        [
+          {
+            "node": "Está Atrasado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Está Atrasado?": {
+      "main": [
+        [
+          {
+            "node": "Alertar Comitê de Ética (Slack)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alertar Comitê de Ética (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
